@@ -1,0 +1,7 @@
+{
+  "name": "BLP Scan Kurir - Scanner App",
+  "description": "A high-performance logistics scanner application for managing shipping receipts across multiple courier services including Shopee, J&T, GOTO, and more.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
