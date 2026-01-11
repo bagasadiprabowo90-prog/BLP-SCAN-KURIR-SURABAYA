@@ -81,7 +81,7 @@ const App: React.FC = () => {
   );
 
   // =========================
-  // SCAN
+  // SCAN (Nomor urut PER KURIR + reset tiap hari)
   // =========================
   const handleScan = useCallback(
     (receiptNumber: string) => {
@@ -92,16 +92,20 @@ const App: React.FC = () => {
         (item) => item.receiptNumber === cleanReceipt
       );
 
-      // Nomor urut reset per hari
+      // ✅ Nomor urut reset per hari + PER KURIR TAB
       const todayStr = new Date().toDateString();
-      const itemsToday = scannedItems.filter(
-        (item) => new Date(item.scannedAt).toDateString() === todayStr
+
+      const itemsTodayThisCourier = scannedItems.filter(
+        (item) =>
+          new Date(item.scannedAt).toDateString() === todayStr &&
+          item.courier === activeCourier
       );
 
-      const maxDailyNumber = itemsToday.reduce(
+      const maxDailyNumber = itemsTodayThisCourier.reduce(
         (max, item) => Math.max(max, item.dailyNumber || 0),
         0
       );
+
       const nextNumber = maxDailyNumber + 1;
 
       const newItem: ScanItem = {
@@ -135,26 +139,37 @@ const App: React.FC = () => {
     [addToast]
   );
 
+  // ✅ Hapus semua: GLOBAL semua kurir
   const handleClearAll = useCallback(() => {
     setScannedItems([]);
     localStorage.removeItem("blp_scan_data");
-    addToast("Database berhasil dikosongkan.", "success");
+    addToast("Semua data berhasil dikosongkan.", "success");
   }, [addToast]);
 
+  // ✅ Hapus duplikat: HANYA tab kurir aktif
   const handleDeleteDuplicates = useCallback(() => {
-    const initialCount = scannedItems.length;
-    const filtered = scannedItems.filter((item) => !item.isDuplicate);
+    const before = scannedItems.length;
 
-    if (initialCount - filtered.length > 0) {
+    const filtered = scannedItems.filter((item) => {
+      // selain tab aktif jangan disentuh
+      if (item.courier !== activeCourier) return true;
+
+      // tab aktif -> buang yg duplikat
+      return !item.isDuplicate;
+    });
+
+    const removed = before - filtered.length;
+
+    if (removed > 0) {
       setScannedItems(filtered);
-      addToast(`${initialCount - filtered.length} data duplikat dihapus`, "success");
+      addToast(`${removed} data duplikat dihapus (${activeCourier})`, "success");
     } else {
-      addToast("Tidak ada data duplikat", "warning");
+      addToast(`Tidak ada data duplikat (${activeCourier})`, "warning");
     }
-  }, [scannedItems, addToast]);
+  }, [scannedItems, activeCourier, addToast]);
 
   // =========================
-  // EXPORT EXCEL (ExcelJS)
+  // EXPORT EXCEL (GLOBAL)
   // =========================
   const handleExportExcel = useCallback(async () => {
     if (scannedItems.length === 0) {
@@ -166,6 +181,7 @@ const App: React.FC = () => {
       const workbook = new ExcelJS.Workbook();
       const worksheet = workbook.addWorksheet("Data Scan");
 
+      // ✅ Header sesuai request kamu
       worksheet.columns = [
         { header: "ID", key: "id", width: 10 },
         { header: "Nomor Resi", key: "resi", width: 30 },
@@ -176,7 +192,7 @@ const App: React.FC = () => {
 
       worksheet.getRow(1).font = { bold: true };
 
-      // Data dari lama -> baru
+      // tampil urut dari awal scan -> terakhir
       scannedItems
         .slice()
         .reverse()
@@ -211,7 +227,7 @@ const App: React.FC = () => {
   }, [scannedItems, addToast]);
 
   // =========================
-  // SYNC GOOGLE SHEETS
+  // SYNC GOOGLE SHEETS (hanya data baru)
   // =========================
   const handleSync = useCallback(async () => {
     if (scannedItems.length === 0) {
@@ -224,7 +240,7 @@ const App: React.FC = () => {
       return;
     }
 
-    // 1) hanya data baru sejak sync terakhir
+    // ✅ filter hanya data baru sejak sync terakhir
     const newItems = scannedItems.filter((item) => {
       if (!lastSyncedAt) return true;
       return (
@@ -237,7 +253,7 @@ const App: React.FC = () => {
       return;
     }
 
-    // 2) sort supaya ID masuk urut
+    // ✅ sort supaya kirim urut
     const newItemsSorted = [...newItems].sort((a, b) => {
       const da = a.dailyNumber || 0;
       const db = b.dailyNumber || 0;
@@ -250,7 +266,7 @@ const App: React.FC = () => {
 
     const payload = newItemsSorted.map((item) => ({
       id: item.id,
-      dailyNumber: item.dailyNumber,
+      dailyNumber: item.dailyNumber, // ID di sheet nanti pakai dailyNumber
       receiptNumber: item.receiptNumber,
       courier: item.courier,
       scannedAt: item.scannedAt,
@@ -261,7 +277,6 @@ const App: React.FC = () => {
     addToast(`Mengirim ${payload.length} data baru...`, "warning");
 
     try {
-      // anti-cache + anti redirect error
       const url = `${GOOGLE_SCRIPT_URL}?nocache=${Date.now()}`;
 
       const response = await fetch(url, {
@@ -292,12 +307,14 @@ const App: React.FC = () => {
         return;
       }
 
-      // update sync pointer
+      // ✅ update sync pointer ke data terbaru yg dikirim
       const newest = newItemsSorted[newItemsSorted.length - 1];
       setLastSyncedAt(newest.scannedAt);
 
       addToast(
-        `✅ Sync berhasil! Added: ${result.added ?? "-"}, Skipped: ${result.skipped ?? "-"}`,
+        `✅ Sync berhasil! Added: ${result.added ?? "-"}, Skipped: ${
+          result.skipped ?? "-"
+        }`,
         "success"
       );
     } catch (error) {
@@ -340,6 +357,12 @@ const App: React.FC = () => {
     return counts;
   }, [scannedItems]);
 
+  // ✅ RIWAYAT TABEL: tampil hanya courier tab aktif
+  const filteredItems = useMemo(() => {
+    return scannedItems.filter((item) => item.courier === activeCourier);
+  }, [scannedItems, activeCourier]);
+
+  // ✅ PRINT: hanya tab aktif
   const printItems = useMemo(
     () =>
       scannedItems
@@ -381,10 +404,11 @@ const App: React.FC = () => {
 
             <div className="lg:col-span-8 bg-white border border-slate-200 rounded-xl shadow-sm min-h-[500px] flex flex-col overflow-hidden">
               <DataTable
-                items={scannedItems}
-                onClear={handleClearAll}
+                items={filteredItems}
+                activeCourier={activeCourier}
+                onClear={handleClearAll} // ✅ global hapus semua
                 onDelete={handleDeleteItem}
-                onDeleteDuplicates={handleDeleteDuplicates}
+                onDeleteDuplicates={handleDeleteDuplicates} // ✅ tab aktif only
               />
             </div>
           </div>
